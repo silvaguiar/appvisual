@@ -377,7 +377,15 @@ async function renderDashboard() {
     companies = await PermissionStore.getCompaniesForUser(session.userId);
     groups = await PermissionStore.getGroupsForUser(session.userId);
     const gIds = new Set(groups.map(g => g.id));
-    panels = allPanels.filter(p => gIds.has(p.group_id));
+    const userPerms = await PermissionStore.getByUser(session.userId);
+    panels = allPanels.filter(p => {
+      if (!gIds.has(p.group_id)) return false;
+      if (userPerms.some(perm => perm.panel_id === p.id)) return true;
+      if (userPerms.some(perm => perm.group_id === p.group_id && !perm.panel_id)) return true;
+      const g = allGroups.find(x => x.id === p.group_id);
+      if (g && userPerms.some(perm => perm.company_id === g.company_id && !perm.group_id)) return true;
+      return false;
+    });
   }
 
   mc.innerHTML = `
@@ -635,9 +643,22 @@ async function renderGroupDetail(groupId) {
   const group = await GroupStore.getById(groupId);
   const isAdmin = Auth.isAdmin();
   if (!group) { navigateTo('dashboard'); return; }
-  if (!isAdmin && !(await PermissionStore.userHasGroup(Auth.getSession().userId, groupId))) { navigateTo('dashboard'); return; }
 
-  const panels = await PanelStore.getByGroup(groupId);
+  let panels = await PanelStore.getByGroup(groupId);
+  if (!isAdmin) {
+    const userPerms = await PermissionStore.getByUser(Auth.getSession().userId);
+    const hasCompany = userPerms.some(p => p.company_id === group.company_id && !p.group_id);
+    const hasGroup = userPerms.some(p => p.group_id === groupId && !p.panel_id);
+
+    if (!hasCompany && !hasGroup && !userPerms.some(p => p.group_id === groupId)) {
+      navigateTo('dashboard'); return;
+    }
+
+    if (!hasCompany && !hasGroup) {
+      const allowedPanelIds = new Set(userPerms.filter(p => p.group_id === groupId && p.panel_id).map(p => p.panel_id));
+      panels = panels.filter(p => allowedPanelIds.has(p.id));
+    }
+  }
   const company = isAdmin ? await CompanyStore.getById(group.company_id) : null;
 
   window._cacheGroupPanels = panels;
@@ -736,7 +757,7 @@ async function viewPanel(panelId) {
   const panel = await PanelStore.getById(panelId);
   if (!panel) return;
   if (!Auth.isAdmin()) {
-    if (!(await PermissionStore.userHasGroup(Auth.getSession().userId, panel.group_id))) {
+    if (!(await PermissionStore.userHasPanel(Auth.getSession().userId, panel.id))) {
       showToast('Acesso negado', 'error'); return;
     }
   }
@@ -1092,17 +1113,33 @@ async function openUserPermModal(userId) {
   const user = await UserStore.getById(userId);
   if (!user) return;
   const companies = await CompanyStore.getAll();
+  const allPanels = await PanelStore.getAll();
   const allPerms = await PermissionStore.getAll();
 
   const listHTML = await Promise.all(companies.map(async (c) => {
     const groups = await GroupStore.getByCompany(c.id);
-    const hasCompanyPerm = allPerms.some(p => p.user_id === userId && p.company_id === c.id && !p.group_id);
+    const hasCompanyPerm = allPerms.some(p => p.user_id === userId && p.company_id === c.id && !p.group_id && !p.panel_id);
+
     const groupsHTML = groups.map(g => {
-      const hasGroup = allPerms.some(p => p.user_id === userId && (p.group_id === g.id || (p.company_id === c.id && !p.group_id)));
+      const hasGroup = allPerms.some(p => p.user_id === userId && p.group_id === g.id && !p.panel_id);
+      const isGroupDisabled = hasCompanyPerm;
+      const groupChecked = hasGroup || hasCompanyPerm;
+
+      const groupPanels = allPanels.filter(p => p.group_id === g.id);
+      const panelsHTML = groupPanels.map(panel => {
+        const hasPanel = allPerms.some(p => p.user_id === userId && p.panel_id === panel.id);
+        const isPanelDisabled = groupChecked;
+        const panelChecked = hasPanel || groupChecked;
+        return `<div class="perm-sub-item" style="padding-left:1rem;background:rgba(0,0,0,0.05)">
+          <span style="font-size:0.78rem;color:var(--text-muted);padding-left:1.5rem">${Icons.monitor} ${panel.name}</span>
+          <label class="perm-toggle"><input type="checkbox" ${panelChecked ? 'checked' : ''} ${isPanelDisabled ? 'disabled' : ''} onchange="togglePanelPerm('${userId}','${c.id}','${g.id}','${panel.id}',this.checked)"><span class="slider"></span></label>
+        </div>`;
+      }).join('');
+
       return `<div class="perm-sub-item">
         <span style="font-size:0.82rem;color:var(--text-secondary);padding-left:1.5rem">${Icons.folder} ${g.name}</span>
-        <label class="perm-toggle"><input type="checkbox" ${hasGroup ? 'checked' : ''} ${hasCompanyPerm ? 'disabled' : ''} onchange="toggleGroupPerm('${userId}','${c.id}','${g.id}',this.checked)"><span class="slider"></span></label>
-      </div>`;
+        <label class="perm-toggle"><input type="checkbox" ${groupChecked ? 'checked' : ''} ${isGroupDisabled ? 'disabled' : ''} onchange="toggleGroupPerm('${userId}','${c.id}','${g.id}',this.checked)"><span class="slider"></span></label>
+      </div>${panelsHTML}`;
     }).join('');
     return `<div class="perm-company-block">
       <div class="perm-item" style="background:rgba(0,0,0,0.15)">
@@ -1132,8 +1169,19 @@ async function toggleCompanyPerm(userId, companyId, checked) {
 }
 
 async function toggleGroupPerm(userId, companyId, groupId, checked) {
-  if (checked) { await PermissionStore.grant(userId, companyId, groupId); }
-  else { await PermissionStore.revoke(userId, companyId, groupId); }
+  if (checked) {
+    await PermissionStore.grant(userId, companyId, groupId);
+    const allPanels = await PanelStore.getByGroup(groupId);
+    for (const p of allPanels) { await PermissionStore.revoke(userId, companyId, groupId, p.id); }
+  } else {
+    await PermissionStore.revoke(userId, companyId, groupId);
+  }
+  openUserPermModal(userId);
+}
+
+async function togglePanelPerm(userId, companyId, groupId, panelId, checked) {
+  if (checked) { await PermissionStore.grant(userId, companyId, groupId, panelId); }
+  else { await PermissionStore.revoke(userId, companyId, groupId, panelId); }
   openUserPermModal(userId);
 }
 
@@ -1142,18 +1190,35 @@ async function openCompanyPermModal(companyId) {
   if (!company) return;
   const users = (await UserStore.getAll()).filter(u => u.role !== 'admin');
   const groups = await GroupStore.getByCompany(companyId);
+  const allPanels = await PanelStore.getAll();
   const allPerms = await PermissionStore.getAll();
 
   const listHTML = users.map(u => {
-    const hasCompanyPerm = allPerms.some(p => p.user_id === u.id && p.company_id === companyId && !p.group_id);
+    const hasCompanyPerm = allPerms.some(p => p.user_id === u.id && p.company_id === companyId && !p.group_id && !p.panel_id);
     const initials = u.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+
     const groupsHTML = groups.map(g => {
-      const hasGroup = allPerms.some(p => p.user_id === u.id && (p.group_id === g.id || (p.company_id === companyId && !p.group_id)));
+      const hasGroup = allPerms.some(p => p.user_id === u.id && p.group_id === g.id && !p.panel_id);
+      const isGroupDisabled = hasCompanyPerm;
+      const groupChecked = hasGroup || hasCompanyPerm;
+
+      const groupPanels = allPanels.filter(p => p.group_id === g.id);
+      const panelsHTML = groupPanels.map(panel => {
+        const hasPanel = allPerms.some(p => p.user_id === u.id && p.panel_id === panel.id);
+        const isPanelDisabled = groupChecked;
+        const panelChecked = hasPanel || groupChecked;
+        return `<div class="perm-sub-item" style="padding-left:1rem;background:rgba(0,0,0,0.05)">
+          <span style="font-size:0.78rem;color:var(--text-muted);padding-left:1.5rem">${Icons.monitor} ${panel.name}</span>
+          <label class="perm-toggle"><input type="checkbox" ${panelChecked ? 'checked' : ''} ${isPanelDisabled ? 'disabled' : ''} onchange="togglePanelPermFromCompany('${u.id}','${companyId}','${g.id}','${panel.id}',this.checked)"><span class="slider"></span></label>
+        </div>`;
+      }).join('');
+
       return `<div class="perm-sub-item">
         <span style="font-size:0.82rem;color:var(--text-secondary);padding-left:1.5rem">${Icons.folder} ${g.name}</span>
-        <label class="perm-toggle"><input type="checkbox" ${hasGroup ? 'checked' : ''} ${hasCompanyPerm ? 'disabled' : ''} onchange="toggleGroupPermFromCompany('${u.id}','${companyId}','${g.id}',this.checked)"><span class="slider"></span></label>
-      </div>`;
+        <label class="perm-toggle"><input type="checkbox" ${groupChecked ? 'checked' : ''} ${isGroupDisabled ? 'disabled' : ''} onchange="toggleGroupPermFromCompany('${u.id}','${companyId}','${g.id}',this.checked)"><span class="slider"></span></label>
+      </div>${panelsHTML}`;
     }).join('');
+
     return `<div class="perm-company-block">
       <div class="perm-item" style="background:rgba(0,0,0,0.15)">
         <div class="perm-item-info"><div class="user-avatar" style="width:24px;height:24px;font-size:0.6rem">${initials}</div>
@@ -1182,8 +1247,19 @@ async function toggleCompanyPermFromCompany(userId, companyId, checked) {
 }
 
 async function toggleGroupPermFromCompany(userId, companyId, groupId, checked) {
-  if (checked) { await PermissionStore.grant(userId, companyId, groupId); }
-  else { await PermissionStore.revoke(userId, companyId, groupId); }
+  if (checked) {
+    await PermissionStore.grant(userId, companyId, groupId);
+    const allPanels = await PanelStore.getByGroup(groupId);
+    for (const p of allPanels) { await PermissionStore.revoke(userId, companyId, groupId, p.id); }
+  } else {
+    await PermissionStore.revoke(userId, companyId, groupId);
+  }
+  openCompanyPermModal(companyId);
+}
+
+async function togglePanelPermFromCompany(userId, companyId, groupId, panelId, checked) {
+  if (checked) { await PermissionStore.grant(userId, companyId, groupId, panelId); }
+  else { await PermissionStore.revoke(userId, companyId, groupId, panelId); }
   openCompanyPermModal(companyId);
 }
 

@@ -271,12 +271,13 @@ const PermissionStore = {
   },
 
   async userHasGroup(userId, groupId) {
-    // Check direct group permission
+    // Check direct group permission (where panel_id is null)
     const { data: directPerm } = await db
       .from('permissions')
       .select('id')
       .eq('user_id', userId)
       .eq('group_id', groupId)
+      .is('panel_id', null)
       .limit(1);
 
     if (directPerm && directPerm.length > 0) return true;
@@ -294,6 +295,23 @@ const PermissionStore = {
       .limit(1);
 
     return companyPerm && companyPerm.length > 0;
+  },
+
+  async userHasPanel(userId, panelId) {
+    const { data: directPerm } = await db
+      .from('permissions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('panel_id', panelId)
+      .limit(1);
+
+    if (directPerm && directPerm.length > 0) return true;
+
+    // Check group or company permission
+    const panel = await PanelStore.getById(panelId);
+    if (!panel) return false;
+
+    return await this.userHasGroup(userId, panel.group_id);
   },
 
   async userHasCompany(userId, companyId) {
@@ -367,20 +385,26 @@ const PermissionStore = {
     return profiles || [];
   },
 
-  async grant(userId, companyId, groupId = null) {
+  async grant(userId, companyId, groupId = null, panelId = null) {
     const insert = { user_id: userId, company_id: companyId };
     if (groupId) insert.group_id = groupId;
+    if (panelId) insert.panel_id = panelId;
 
-    const { error } = await db
-      .from('permissions')
-      .upsert(insert, { onConflict: groupId ? 'user_id,company_id,group_id' : undefined });
+    const query = db.from('permissions').select('id').eq('user_id', userId).eq('company_id', companyId);
+    if (groupId) query.eq('group_id', groupId); else query.is('group_id', null);
+    if (panelId) query.eq('panel_id', panelId); else query.is('panel_id', null);
 
-    if (error && !error.message.includes('duplicate')) {
-      throw new Error(error.message);
+    const { data } = await query.limit(1);
+
+    if (!data || data.length === 0) {
+      const { error } = await db.from('permissions').insert(insert);
+      if (error && !error.message.includes('duplicate')) {
+        throw new Error(error.message);
+      }
     }
   },
 
-  async revoke(userId, companyId, groupId = null) {
+  async revoke(userId, companyId, groupId = null, panelId = null) {
     let query = db
       .from('permissions')
       .delete()
@@ -391,6 +415,12 @@ const PermissionStore = {
       query = query.eq('group_id', groupId);
     } else {
       query = query.is('group_id', null);
+    }
+
+    if (panelId) {
+      query = query.eq('panel_id', panelId);
+    } else {
+      query = query.is('panel_id', null);
     }
 
     await query;
