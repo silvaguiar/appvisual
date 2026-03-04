@@ -4,6 +4,43 @@
 
 let currentRoute = '';
 
+// ---- THEME MANAGER ----
+const Theme = {
+  init() {
+    const saved = localStorage.getItem('appbi-theme') || 'dark';
+    this.apply(saved);
+  },
+  current() {
+    return localStorage.getItem('appbi-theme') || 'dark';
+  },
+  apply(theme) {
+    localStorage.setItem('appbi-theme', theme);
+    if (theme === 'light') {
+      document.body.classList.add('theme-light');
+    } else {
+      document.body.classList.remove('theme-light');
+    }
+  },
+  toggle() {
+    this.apply(this.current() === 'dark' ? 'light' : 'dark');
+  }
+};
+
+// ---- AVATAR MANAGER ----
+const Avatar = {
+  _key: 'appbi-avatar',
+  get() { return localStorage.getItem(this._key) || null; },
+  set(base64) { localStorage.setItem(this._key, base64); },
+  remove() { localStorage.removeItem(this._key); },
+  getHTML(initials, size = 36, fontSize = '0.85rem') {
+    const pic = this.get();
+    if (pic) {
+      return `<img src="${pic}" alt="Avatar" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;" />`;
+    }
+    return `<span style="font-size:${fontSize};font-weight:700;color:#fff">${initials}</span>`;
+  }
+};
+
 // ---- ROUTER ----
 function navigateTo(route) {
   window.location.hash = route;
@@ -30,23 +67,36 @@ async function handleRoute() {
   }
 
   const [page, ...params] = route.split('/');
-  updateActiveNav(page);
+  updateActiveNav(page, params);
 
-  switch (page) {
-    case 'dashboard': await renderDashboard(); break;
-    case 'companies': await renderCompanies(); break;
-    case 'company': await renderCompanyDetail(params[0]); break;
-    case 'group': await renderGroupDetail(params[0]); break;
-    case 'users':
-      if (Auth.isAdmin()) await renderUsers();
-      else navigateTo('dashboard');
-      break;
-    case 'permissions':
-      if (Auth.isAdmin()) await renderPermissions();
-      else navigateTo('dashboard');
-      break;
-    case 'panel': await viewPanel(params[0]); break;
-    default: await renderDashboard();
+  try {
+    switch (page) {
+      case 'dashboard': await renderDashboard(); break;
+      case 'companies': await renderCompanies(); break;
+      case 'company': await renderCompanyDetail(params[0]); break;
+      case 'group': await renderGroupDetail(params[0]); break;
+      case 'users':
+        if (Auth.isAdmin()) await renderUsers();
+        else navigateTo('dashboard');
+        break;
+      case 'permissions':
+        if (Auth.isAdmin()) await renderPermissions();
+        else navigateTo('dashboard');
+        break;
+      case 'panel': await viewPanel(params[0]); break;
+      case 'settings': await renderSettings(params[0] || 'profile'); break;
+      default: await renderDashboard();
+    }
+  } catch (err) {
+    console.error('Erro ao renderizar rota:', err);
+    const mc = document.getElementById('main-content');
+    if (mc) {
+      mc.innerHTML = `<div style="padding:2rem;text-align:center;color:#ef4444">
+        <h2>Erro de Navegação</h2>
+        <p>${err.message}</p>
+        <button class="btn btn-primary" onclick="handleRoute()" style="margin-top:1rem">Tentar Novamente</button>
+      </div>`;
+    }
   }
 }
 
@@ -198,12 +248,36 @@ function renderPending() {
 }
 
 // ---- RENDER APP SHELL ----
-function renderApp() {
+async function renderApp() {
   if (!Auth.isLoggedIn()) { renderLogin(); return; }
   if (Auth.isPending()) { renderPending(); return; }
   const session = Auth.getSession();
   const isAdmin = session.role === 'admin';
   const initials = session.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+  const avatarHTML = Avatar.getHTML(initials, 36);
+
+  let navHTML = '';
+  if (isAdmin) {
+    navHTML = `
+      <div class="nav-section">
+        <div class="nav-section-title">Menu Principal</div>
+        <div class="nav-item" data-nav="dashboard" onclick="navigateTo('dashboard')">${Icons.dashboard} <span>Dashboard</span></div>
+        <a class="nav-item" href="https://glpi.mioche.com.br/front/ticket.form.php" target="_blank" style="text-decoration:none;color:inherit">${Icons.monitor} <span>Suporte</span></a>
+        <div class="nav-item" data-nav="companies" onclick="navigateTo('companies')">${Icons.building} <span>Empresas</span></div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">Administração</div>
+        <div class="nav-item" data-nav="users" onclick="navigateTo('users')">${Icons.users} <span>Usuários</span></div>
+        <div class="nav-item" data-nav="permissions" onclick="navigateTo('permissions')">${Icons.shield} <span>Permissões</span></div>
+      </div>`;
+  } else {
+    navHTML = `
+      <div class="nav-section">
+        <div class="nav-section-title">Menu Principal</div>
+        <div class="nav-item" data-nav="dashboard" onclick="navigateTo('dashboard')">${Icons.dashboard} <span>Dashboard</span></div>
+        <a class="nav-item" href="https://glpi.mioche.com.br/front/ticket.form.php" target="_blank" style="text-decoration:none;color:inherit">${Icons.monitor} <span>Suporte</span></a>
+      </div>`;
+  }
 
   document.getElementById('app').innerHTML = `
     <button class="mobile-toggle" onclick="toggleSidebar()">${Icons.menu}</button>
@@ -213,28 +287,31 @@ function renderApp() {
           <div class="logo-sm">${Icons.barChart}</div>
           <h2>App BI</h2>
         </div>
-        <nav class="sidebar-nav">
-          <div class="nav-section">
-            <div class="nav-section-title">Menu</div>
-            <div class="nav-item" data-nav="dashboard" onclick="navigateTo('dashboard')">${Icons.dashboard} <span>Dashboard</span></div>
-            <div class="nav-item" data-nav="companies" onclick="navigateTo('companies')">${Icons.building} <span>Empresas</span></div>
-          </div>
-          ${isAdmin ? `
-          <div class="nav-section">
-            <div class="nav-section-title">Administração</div>
-            <div class="nav-item" data-nav="users" onclick="navigateTo('users')">${Icons.users} <span>Usuários</span></div>
-            <div class="nav-item" data-nav="permissions" onclick="navigateTo('permissions')">${Icons.shield} <span>Permissões</span></div>
-          </div>` : ''}
+        <nav class="sidebar-nav" style="flex:1">
+          ${navHTML}
         </nav>
-        <div class="sidebar-footer">
-          <div class="user-info">
-            <div class="user-avatar">${initials}</div>
-            <div class="user-details">
-              <div class="user-name">${session.name}</div>
-              <div class="user-role">${isAdmin ? 'Administrador' : 'Usuário'}</div>
+        <div class="sidebar-footer" style="padding:1rem">
+          <div style="display:flex;flex-direction:column;gap:0.75rem;background:var(--bg-glass);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:0.75rem;border-radius:1rem;border:1px solid rgba(255,255,255,0.05);box-shadow:0 4px 12px rgba(0,0,0,0.1)">
+            <div style="display:flex;align-items:center;gap:0.75rem;cursor:default">
+              <div style="overflow:hidden;border-radius:50%;width:32px;height:32px;flex-shrink:0">${avatarHTML}</div>
+              <div style="display:flex;flex-direction:column;flex:1;min-width:0">
+                <div style="font-size:0.875rem;font-weight:600;color:var(--text-primary);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${session.name.split(' ')[0]}</div>
+                <div style="font-size:0.7rem;color:var(--text-muted);line-height:1.2;margin-top:0.2rem;text-transform:uppercase;letter-spacing:0.5px">${isAdmin ? 'Admin' : 'Usuário'}</div>
+              </div>
+            </div>
+            <div style="height:1px;width:100%;background:rgba(255,255,255,0.05)"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <button class="btn btn-ghost" style="padding:0.4rem 0.6rem;font-size:0.8rem;gap:0.4rem;color:var(--text-secondary);flex:1;justify-content:center" onclick="navigateTo('settings/profile')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Ajustes
+              </button>
+              <div style="width:1px;height:12px;background:rgba(255,255,255,0.05)"></div>
+              <button class="btn btn-ghost" style="padding:0.4rem 0.6rem;font-size:0.8rem;gap:0.4rem;color:#ef4444;flex:1;justify-content:center" onclick="doLogout()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Sair
+              </button>
             </div>
           </div>
-          <button class="btn-logout" onclick="doLogout()">${Icons.logout} <span>Sair</span></button>
         </div>
       </aside>
       <main class="main-content" id="main-content"></main>
@@ -246,11 +323,18 @@ function renderApp() {
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
 
-function updateActiveNav(page) {
+function updateActiveNav(page, params = []) {
+  const session = Auth.getSession();
+  const isAdmin = session && session.role === 'admin';
+
   document.querySelectorAll('.nav-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.nav === page ||
-      (page === 'company' && el.dataset.nav === 'companies') ||
-      (page === 'group' && el.dataset.nav === 'companies'));
+    if (isAdmin) {
+      el.classList.toggle('active', el.dataset.nav === page ||
+        (page === 'company' && el.dataset.nav === 'companies') ||
+        (page === 'group' && el.dataset.nav === 'companies'));
+    } else {
+      el.classList.toggle('active', (page === 'group' && el.dataset.nav === `group_${params[0]}`));
+    }
   });
   const sidebar = document.getElementById('sidebar');
   if (sidebar) sidebar.classList.remove('open');
@@ -292,13 +376,13 @@ async function renderDashboard() {
       </div></div></div>
       <div class="page-body">
         <div class="stats-grid">
-          ${statCard('building', 'Empresas', companies.length, '#6366f1')}
+          ${isAdmin ? statCard('building', 'Empresas', companies.length, '#6366f1') : ''}
           ${statCard('folder', 'Grupos', groups.length, '#a855f7')}
           ${statCard('monitor', 'Painéis', panels.length, '#22c55e')}
           ${isAdmin ? statCard('users', 'Usuários', allUsers.length, '#f59e0b') : ''}
         </div>
-        ${companies.length > 0 ? `
-          <div class="section-title">${Icons.building} Empresas</div>
+        ${isAdmin ? (companies.length > 0 ? `
+          <div class="section-title" style="margin-top:2rem">${Icons.building} Empresas</div>
           <div class="cards-grid">
             ${companies.slice(0, 6).map(c => {
     const gc = allGroups.filter(g => g.company_id === c.id).length;
@@ -306,7 +390,15 @@ async function renderDashboard() {
     return companyCard(c, gc, pc, isAdmin);
   }).join('')}
           </div>
-        ` : emptyState('building', 'Nenhuma empresa cadastrada')}
+        ` : emptyState('building', 'Nenhuma empresa cadastrada')) : (groups.length > 0 ? `
+          <div class="section-title" style="margin-top:2rem">${Icons.folder} Meus Painéis</div>
+          <div class="cards-grid">
+            ${groups.map(g => {
+    const pc = panels.filter(p => p.group_id === g.id).length;
+    return groupCard(g, pc, isAdmin);
+  }).join('')}
+          </div>
+        ` : emptyState('folder', 'Nenhum painel liberado no momento'))}
       </div>
     </div>
   `;
@@ -530,18 +622,18 @@ async function renderGroupDetail(groupId) {
   mc.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:50vh;color:var(--text-muted)">Carregando...</div>';
   const group = await GroupStore.getById(groupId);
   const isAdmin = Auth.isAdmin();
-  if (!group) { navigateTo('companies'); return; }
-  if (!isAdmin && !(await PermissionStore.userHasGroup(Auth.getSession().userId, groupId))) { navigateTo('companies'); return; }
+  if (!group) { navigateTo('dashboard'); return; }
+  if (!isAdmin && !(await PermissionStore.userHasGroup(Auth.getSession().userId, groupId))) { navigateTo('dashboard'); return; }
 
   const panels = await PanelStore.getByGroup(groupId);
-  const company = await CompanyStore.getById(group.company_id);
+  const company = isAdmin ? await CompanyStore.getById(group.company_id) : null;
 
   window._cacheGroupPanels = panels;
 
   mc.innerHTML = `
     <div class="fade-in">
       <div class="page-header"><div>
-        <button class="btn-back" onclick="navigateTo('company/${group.company_id}')">${Icons.back} Voltar a ${company ? company.name : 'empresa'}</button>
+        <button class="btn-back" onclick="navigateTo('${isAdmin ? `company/${group.company_id}` : 'dashboard'}')">${Icons.back} Voltar${isAdmin && company ? ` a ${company.name}` : ''}</button>
         <div class="page-header-top" style="margin-top:0.75rem">
           <h1 style="display:flex;align-items:center;gap:0.5rem">
             <span style="color:${group.color}">${Icons.folder}</span> ${group.name}
@@ -786,13 +878,55 @@ function filterUsers(query) {
 async function openEditUserModal(userId) {
   const user = await UserStore.getById(userId);
   if (!user) return;
+
+  const allCompanies = await CompanyStore.getAll();
+  const allGroups = await GroupStore.getAll();
+  const userPerms = await PermissionStore.getByUser(userId);
+
+  const isTargetAdmin = user.role === 'admin';
+
+  let accessHTML = '';
+  if (allCompanies.length === 0) {
+    accessHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Nenhuma empresa cadastrada.</div>';
+  } else {
+    accessHTML = allCompanies.map(c => {
+      const cGroups = allGroups.filter(g => g.company_id === c.id);
+      if (cGroups.length === 0) return ''; // Só mostra empresas com grupos
+
+      const hasCompanyWideAccess = userPerms.some(p => p.company_id === c.id && !p.group_id);
+
+      const groupCheckboxes = cGroups.map(g => {
+        const hasGroupAccess = hasCompanyWideAccess || userPerms.some(p => p.group_id === g.id);
+        return `
+          <label style="display:flex;align-items:center;gap:0.4rem;padding:0.2rem 0;margin-left:1.5rem;cursor:pointer;font-size:0.85rem">
+            <input type="checkbox" class="group-perm-check" data-company="${c.id}" value="${g.id}"
+              ${hasGroupAccess ? 'checked' : ''}
+              ${isTargetAdmin ? 'disabled' : ''}>
+            <span style="color:${g.color || '#fff'};margin-right:0.2rem">●</span> ${g.name}
+          </label>`;
+      }).join('');
+
+      return `
+        <div style="margin-bottom:0.8rem">
+          <div style="font-weight:600;font-size:0.9rem;color:var(--text-primary);margin-bottom:0.3rem;display:flex;align-items:center;gap:0.4rem">
+            <span style="color:${c.color || '#fff'}">●</span> ${c.name}
+          </div>
+          ${groupCheckboxes}
+        </div>`;
+    }).join('');
+
+    if (!accessHTML) {
+      accessHTML = '<div style="color:var(--text-muted);font-size:0.85rem">Nenhum grupo (painel) cadastrado.</div>';
+    }
+  }
+
   openModal('Editar Usuário', `
     <form id="user-form">
       <div class="form-group"><label>Nome</label>
         <input type="text" class="form-input" id="user-name" value="${user.name}" required></div>
       <div class="form-row">
         <div class="form-group"><label>Perfil</label>
-          <select class="form-select" id="user-role">
+          <select class="form-select" id="user-role" onchange="document.querySelectorAll('.group-perm-check').forEach(cb => cb.disabled = this.value === 'admin')">
             <option value="user" ${user.role === 'user' ? 'selected' : ''}>Usuário</option>
             <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Administrador</option>
           </select></div>
@@ -802,23 +936,52 @@ async function openEditUserModal(userId) {
             <option value="false" ${user.active === false ? 'selected' : ''}>Inativo</option>
           </select></div>
       </div>
-      <div class="form-actions">
+      <div class="form-group" style="background:var(--bg-glass);padding:1rem;border-radius:var(--radius-md);margin-top:0.5rem;border:1px solid rgba(255,255,255,0.05)">
+        <label style="margin-bottom:0.2rem">Acesso a Grupos (Painéis)</label>
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.75rem">Selecione quais grupos o usuário poderá acessar no menu lateral:</div>
+        <div style="max-height:160px;overflow-y:auto;padding-right:0.5rem">
+          ${accessHTML}
+        </div>
+      </div>
+      <div class="form-actions" style="margin-top:1.5rem">
         <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Salvar</button>
+        <button type="submit" class="btn btn-primary" id="save-user-btn">Salvar</button>
       </div>
     </form>
   `);
   document.getElementById('user-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = document.getElementById('save-user-btn');
+    btn.disabled = true; btn.textContent = 'Salvando...';
     try {
+      const newRole = document.getElementById('user-role').value;
       await UserStore.update(userId, {
         name: document.getElementById('user-name').value.trim(),
-        role: document.getElementById('user-role').value,
+        role: newRole,
         active: document.getElementById('user-active').value === 'true',
       });
+
+      if (newRole !== 'admin') {
+        // Limpar todas as permissões antigas do usuário primeiro
+        const existingPerms = await PermissionStore.getByUser(userId);
+        const uniqueCompanies = [...new Set(existingPerms.map(p => p.company_id))];
+        for (const cid of uniqueCompanies) {
+          await PermissionStore.revokeAllForUserInCompany(userId, cid);
+        }
+
+        // Conceder permissão aos grupos marcados
+        const checkedBoxes = document.querySelectorAll('.group-perm-check:checked');
+        for (const cb of checkedBoxes) {
+          const groupId = cb.value;
+          const companyId = cb.dataset.company;
+          await PermissionStore.grant(userId, companyId, groupId);
+        }
+      }
+
       showToast('Usuário atualizado!');
       closeModal(); currentRoute = ''; handleRoute();
     } catch (err) { showToast(err.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Salvar'; }
   });
 }
 
@@ -1012,10 +1175,214 @@ async function toggleGroupPermFromCompany(userId, companyId, groupId, checked) {
   openCompanyPermModal(companyId);
 }
 
+// ---- SETTINGS PAGE ----
+async function renderSettings(section = 'profile') {
+  const mc = document.getElementById('main-content');
+  const session = Auth.getSession();
+  const initials = session.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+  const currentTheme = Theme.current();
+
+  const navItems = [
+    { id: 'profile', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>', label: 'Perfil' },
+    { id: 'password', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>', label: 'Senha' },
+    { id: 'appearance', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>', label: 'Aparência' },
+  ];
+
+  const navHTML = navItems.map(n => `
+    <button class="settings-nav-item ${section === n.id ? 'active' : ''}" onclick="navigateTo('settings/${n.id}')">
+      ${n.icon} ${n.label}
+    </button>`).join('');
+
+  let panelHTML = '';
+
+  if (section === 'profile') {
+    const avatarPic = Avatar.get();
+    panelHTML = `
+      <div class="settings-section-title">Foto e Nome</div>
+      <div class="settings-section-sub">Personalize como você aparece no sistema</div>
+      <div class="avatar-upload-area">
+        <div class="avatar-preview" id="avatar-preview-big">
+          ${avatarPic ? `<img src="${avatarPic}" alt="Avatar">` : `<span style="font-size:1.5rem;font-weight:700;color:#fff">${initials}</span>`}
+        </div>
+        <div class="avatar-upload-btn">
+          <label for="avatar-file-input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Enviar foto
+          </label>
+          <input type="file" id="avatar-file-input" accept="image/*" onchange="handleAvatarUpload(event)">
+          ${avatarPic ? `<button class="btn btn-danger btn-sm" onclick="removeAvatar()" style="font-size:0.75rem;padding:0.3rem 0.7rem">Remover foto</button>` : ''}
+          <span class="avatar-upload-hint">JPG, PNG ou GIF — máx. 2MB</span>
+        </div>
+      </div>
+      <div class="settings-divider"></div>
+      <form id="profile-name-form">
+        <div class="form-group">
+          <label>Nome de exibição</label>
+          <input type="text" class="form-input" id="profile-name" value="${session.name}" required>
+        </div>
+        <div class="form-group">
+          <label>E-mail</label>
+          <input type="email" class="form-input" value="${session.email}" disabled style="opacity:0.5;cursor:not-allowed">
+        </div>
+        <div class="form-actions" style="justify-content:flex-start">
+          <button type="submit" class="btn btn-primary">Salvar alterações</button>
+        </div>
+      </form>`;
+  } else if (section === 'password') {
+    panelHTML = `
+      <div class="settings-section-title">Alterar Senha</div>
+      <div class="settings-section-sub">Escolha uma senha forte com pelo menos 6 caracteres</div>
+      <div id="pwd-error" class="login-error" style="margin-bottom:1rem"></div>
+      <div id="pwd-success" class="login-success" style="margin-bottom:1rem"></div>
+      <form id="change-pwd-form">
+        <div class="form-group">
+          <label>Nova Senha</label>
+          <input type="password" class="form-input" id="new-password" placeholder="Mínimo 6 caracteres" minlength="6" required>
+        </div>
+        <div class="form-group">
+          <label>Confirmar Nova Senha</label>
+          <input type="password" class="form-input" id="confirm-password" placeholder="Repita a senha" minlength="6" required>
+        </div>
+        <div class="form-actions" style="justify-content:flex-start">
+          <button type="submit" class="btn btn-primary">Alterar senha</button>
+        </div>
+      </form>`;
+  } else if (section === 'appearance') {
+    const isDark = currentTheme === 'dark';
+    panelHTML = `
+      <div class="settings-section-title">Aparência</div>
+      <div class="settings-section-sub">Escolha o tema visual do aplicativo</div>
+      <div class="theme-option-grid">
+        <div class="theme-option ${isDark ? 'selected' : ''}" id="opt-dark" onclick="selectTheme('dark')">
+          <div class="theme-preview-dot" style="background:linear-gradient(135deg,#0a0a1a,#111128)"></div>
+          <div>
+            <div style="font-weight:600">Dark</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.2rem">Tema escuro</div>
+          </div>
+          ${isDark ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:auto;color:var(--accent)"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+        </div>
+        <div class="theme-option ${!isDark ? 'selected' : ''}" id="opt-light" onclick="selectTheme('light')">
+          <div class="theme-preview-dot" style="background:linear-gradient(135deg,#f0f2f8,#e8eaf2)"></div>
+          <div>
+            <div style="font-weight:600">Light</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.2rem">Tema claro</div>
+          </div>
+          ${!isDark ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:auto;color:var(--accent)"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+        </div>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text-muted)">A preferência de tema é salva automaticamente neste browser.</p>`;
+  }
+
+  mc.innerHTML = `
+    <div class="fade-in">
+      <div class="page-header">
+        <div class="page-header-top"><h1>Configurações</h1></div>
+      </div>
+      <div class="page-body">
+        <div class="settings-layout">
+          <div class="settings-sidebar">${navHTML}</div>
+          <div class="settings-panel">${panelHTML}</div>
+        </div>
+      </div>
+    </div>`;
+
+  // Listeners
+  if (section === 'profile') {
+    document.getElementById('profile-name-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('profile-name').value.trim();
+      if (!name) return;
+      try {
+        const { error } = await db.auth.updateUser({ data: { name } });
+        if (error) throw error;
+        await db.from('profiles').update({ name }).eq('id', session.userId);
+        showToast('Nome atualizado com sucesso!');
+        currentRoute = '';
+        renderApp();
+        navigateTo('settings/profile');
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  }
+
+  if (section === 'password') {
+    const pwdForm = document.getElementById('change-pwd-form');
+    if (pwdForm) pwdForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const np = document.getElementById('new-password').value;
+      const cp = document.getElementById('confirm-password').value;
+      const errEl = document.getElementById('pwd-error');
+      const sucEl = document.getElementById('pwd-success');
+      const btn = e.target.querySelector('button[type=submit]');
+
+      btn.disabled = true; btn.textContent = 'Alterando...';
+      errEl.classList.remove('show'); sucEl.classList.remove('show');
+
+      if (np !== cp) {
+        errEl.textContent = 'As senhas não coincidem.'; errEl.classList.add('show');
+        btn.disabled = false; btn.textContent = 'Alterar senha';
+        return;
+      }
+      if (np.length < 6) {
+        errEl.textContent = 'A senha deve ter pelo menos 6 caracteres.'; errEl.classList.add('show');
+        btn.disabled = false; btn.textContent = 'Alterar senha';
+        return;
+      }
+
+      try {
+        const { data, error } = await db.auth.updateUser({ password: np });
+        if (error) throw new Error(error.message);
+        if (!data || !data.user) throw new Error('Não foi possível atualizar a senha. Tente fazer logout e login novamente.');
+
+        sucEl.textContent = 'Senha alterada com sucesso!';
+        sucEl.classList.add('show');
+        pwdForm.reset();
+      } catch (err) {
+        errEl.textContent = err.message || 'Erro desconhecido ao alterar senha.';
+        errEl.classList.add('show');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Alterar senha';
+      }
+    });
+  }
+}
+
+function handleAvatarUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { showToast('Imagem muito grande. Máximo 2MB.', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const base64 = e.target.result;
+    Avatar.set(base64);
+    const preview = document.getElementById('avatar-preview-big');
+    if (preview) preview.innerHTML = `<img src="${base64}" alt="Avatar">`;
+    // Update sidebar avatar too
+    const sidebarAvatar = document.querySelector('.sidebar-footer .user-avatar');
+    if (sidebarAvatar) sidebarAvatar.innerHTML = `<img src="${base64}" alt="Avatar" style="width:36px;height:36px;border-radius:50%;object-fit:cover;">`;
+    showToast('Foto atualizada!');
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeAvatar() {
+  Avatar.remove();
+  currentRoute = '';
+  renderApp();
+  navigateTo('settings/profile');
+  showToast('Foto removida');
+}
+
+function selectTheme(theme) {
+  Theme.apply(theme);
+  currentRoute = '';
+  handleRoute();
+}
+
 // ---- INIT ----
 window.addEventListener('hashchange', () => { currentRoute = ''; handleRoute(); });
 window.addEventListener('load', async () => {
   try {
+    Theme.init();
     console.log('App init starting...');
     if (typeof supabase === 'undefined' || !supabase) {
       console.error('Supabase not loaded');
