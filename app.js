@@ -121,7 +121,7 @@ function renderLogin() {
         <div class="login-logo">
           <div class="logo-icon">${Icons.barChart}</div>
           <h1>App BI</h1>
-          <p>Gerenciador de Painéis Power BI</p>
+          <p>Gerenciador de Dashboards</p>
         </div>
         <div class="login-error" id="login-error"></div>
         <div class="login-success" id="login-success"></div>
