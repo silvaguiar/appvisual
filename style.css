@@ -1633,7 +1633,33 @@ a:hover {
   background: #fff;
 }
 
-/* Permission sub-items (company → group drill-down) */
+/* Collapsible permission groups */
+.perm-collapse-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  margin-right: -0.5rem;
+}
+
+.perm-collapse-btn.collapsed {
+  transform: rotate(-90deg);
+}
+
+.perm-panels-container {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.perm-panels-container.collapsed {
+  max-height: 0 !important;
+}
+
 .perm-company-block {
   border-bottom: 1px solid var(--border-color);
 }

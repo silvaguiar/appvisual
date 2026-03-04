@@ -1109,6 +1109,19 @@ function renderPermissionsMatrix(users, companies) {
   </div>`;
 }
 
+function toggleCollapse(groupId, btn) {
+  const container = document.getElementById(`panels-${groupId}`);
+  if (container) {
+    container.classList.toggle('collapsed');
+    btn.classList.toggle('collapsed');
+    if (!container.classList.contains('collapsed')) {
+      container.style.maxHeight = container.scrollHeight + "px";
+    } else {
+      container.style.maxHeight = "0";
+    }
+  }
+}
+
 async function openUserPermModal(userId) {
   const user = await UserStore.getById(userId);
   if (!user) return;
@@ -1137,9 +1150,13 @@ async function openUserPermModal(userId) {
       }).join('');
 
       return `<div class="perm-sub-item">
-        <span style="font-size:0.82rem;color:var(--text-secondary);padding-left:1.5rem">${Icons.folder} ${g.name}</span>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          ${groupPanels.length > 0 ? `<button class="perm-collapse-btn collapsed" onclick="toggleCollapse('${g.id}', this)" title="Expandir/Recolher">${Icons.chevronDown}</button>` : ''}
+          <span style="font-size:0.82rem;color:var(--text-secondary)">${Icons.folder} ${g.name}</span>
+        </div>
         <label class="perm-toggle"><input type="checkbox" ${groupChecked ? 'checked' : ''} ${isGroupDisabled ? 'disabled' : ''} onchange="toggleGroupPerm('${userId}','${c.id}','${g.id}',this.checked)"><span class="slider"></span></label>
-      </div>${panelsHTML}`;
+      </div>
+      <div id="panels-${g.id}" class="perm-panels-container collapsed" style="max-height:0">${panelsHTML}</div>`;
     }).join('');
     return `<div class="perm-company-block">
       <div class="perm-item" style="background:rgba(0,0,0,0.15)">
@@ -1214,9 +1231,13 @@ async function openCompanyPermModal(companyId) {
       }).join('');
 
       return `<div class="perm-sub-item">
-        <span style="font-size:0.82rem;color:var(--text-secondary);padding-left:1.5rem">${Icons.folder} ${g.name}</span>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          ${groupPanels.length > 0 ? `<button class="perm-collapse-btn collapsed" onclick="toggleCollapse('${u.id}-${g.id}', this)" title="Expandir/Recolher">${Icons.chevronDown}</button>` : ''}
+          <span style="font-size:0.82rem;color:var(--text-secondary)">${Icons.folder} ${g.name}</span>
+        </div>
         <label class="perm-toggle"><input type="checkbox" ${groupChecked ? 'checked' : ''} ${isGroupDisabled ? 'disabled' : ''} onchange="toggleGroupPermFromCompany('${u.id}','${companyId}','${g.id}',this.checked)"><span class="slider"></span></label>
-      </div>${panelsHTML}`;
+      </div>
+      <div id="panels-${u.id}-${g.id}" class="perm-panels-container collapsed" style="max-height:0">${panelsHTML}</div>`;
     }).join('');
 
     return `<div class="perm-company-block">
