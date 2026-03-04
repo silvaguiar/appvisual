@@ -60,6 +60,18 @@ async function handleRoute() {
     return;
   }
 
+  // Verifica a sessão ativamente no Supabase para evitar travamento ao voltar após inatividade
+  try {
+    const { data, error } = await db.auth.getSession();
+    if (error || !data.session) {
+      await Auth.logout();
+      renderLogin();
+      return;
+    }
+  } catch (e) {
+    console.warn("Erro ao validar sessão:", e);
+  }
+
   // Check if user is pending approval
   if (Auth.isPending()) {
     renderPending();
